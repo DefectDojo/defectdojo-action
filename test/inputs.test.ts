@@ -38,6 +38,52 @@ describe("readConfig", () => {
     expect(c.engagementName).toBe("fix-login");
   });
 
+  it("isolates engagements off the default branch so they can't mark its findings as duplicates", () => {
+    const env = actionEnv({});
+    const event = join(env.dir, "event.json");
+    const write = (payload: object) => writeFileSync(event, JSON.stringify({ repository: { default_branch: "main" }, ...payload }));
+    process.env.GITHUB_EVENT_PATH = event;
+
+    write({});
+    Object.assign(process.env, { GITHUB_EVENT_NAME: "push", GITHUB_REF_NAME: "main", GITHUB_REF_TYPE: "branch" });
+    expect(readConfig().deduplicationOnEngagement).toBeUndefined();
+
+    Object.assign(process.env, { GITHUB_REF_NAME: "feature-x" });
+    expect(readConfig().deduplicationOnEngagement).toBe(true);
+
+    Object.assign(process.env, { GITHUB_REF_NAME: "v1.2.0", GITHUB_REF_TYPE: "tag" });
+    expect(readConfig()).toMatchObject({ engagementName: "v1.2.0", deduplicationOnEngagement: true });
+
+    write({ pull_request: { head: { sha: "headsha" } } });
+    Object.assign(process.env, { GITHUB_EVENT_NAME: "pull_request", GITHUB_HEAD_REF: "fix-login", GITHUB_REF_NAME: "17/merge", GITHUB_REF_TYPE: "branch" });
+    expect(readConfig()).toMatchObject({ engagementName: "fix-login", deduplicationOnEngagement: true });
+
+    // An explicit engagement or setting is the caller's choice.
+    process.env["INPUT_ENGAGEMENT-NAME"] = "Pipeline";
+    expect(readConfig().deduplicationOnEngagement).toBeUndefined();
+    process.env["INPUT_ENGAGEMENT-NAME"] = "";
+    process.env["INPUT_DEDUPLICATION-ON-ENGAGEMENT"] = "false";
+    expect(readConfig().deduplicationOnEngagement).toBe(false);
+  });
+
+  it("gives the merge queue one engagement per base branch", () => {
+    const env = actionEnv({});
+    const event = join(env.dir, "event.json");
+    writeFileSync(event, JSON.stringify({ repository: { default_branch: "main" }, merge_group: { base_ref: "refs/heads/main" } }));
+    Object.assign(process.env, { GITHUB_EVENT_PATH: event, GITHUB_EVENT_NAME: "merge_group", GITHUB_REF_NAME: "gh-readonly-queue/main/pr-12-abc" });
+    expect(readConfig()).toMatchObject({ engagementName: "merge-queue/main", deduplicationOnEngagement: true });
+  });
+
+  it("rejects a token with characters an API key can't have, without echoing it", () => {
+    actionEnv({ "api-token": "abc def" });
+    expect(() => readConfig()).toThrow(/^api-token contains spaces/);
+  });
+
+  it("caps timeout-minutes at GitHub's six hour job limit", () => {
+    actionEnv({ "timeout-minutes": "100000" });
+    expect(() => readConfig()).toThrow("timeout-minutes must be a number from 1 to 360.");
+  });
+
   it("accepts Pro's asset and organization names", () => {
     actionEnv({ "asset-name": "Payments", "organization-name": "Fintech" });
     expect(readConfig()).toMatchObject({ productName: "Payments", productTypeName: "Fintech" });

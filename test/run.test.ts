@@ -78,7 +78,8 @@ describe("Community Edition", () => {
     expect(summary).toContain("| High | 3 | 1 | 0 | 0 |");
     expect(summary).toContain("### What DefectDojo Pro adds");
     expect(summary).toContain("You set `push-to-connector`, which Community Edition skips.");
-    expect(summary).toContain("> Get Pro from $100/mo");
+    expect(summary).not.toContain("$100");
+    expect(summary).toContain("Sensei scans code repositories");
   });
 
   it("does not import when strict is on and a Pro input is set", async () => {
@@ -155,7 +156,101 @@ describe("Community Edition", () => {
   });
 });
 
+describe("Requests", () => {
+  it("refuses to follow a redirect and names the address to use", async () => {
+    actionEnv({ "defectdojo-url": "http://dojo.example.com" });
+    const { calls } = fakeDojo(() => ({ status: 301, headers: { location: "https://dojo.example.com/api/v2/license/license_status/" } }));
+    await run();
+    expect(process.exitCode).toBe(1);
+    expect(stdout).toContain("::warning::defectdojo-url uses http://");
+    expect(stdout).toContain("does not follow redirects. Set defectdojo-url to https://dojo.example.com.");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("retries a read after a 502 but never repeats an upload", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    actionEnv({});
+    let edition = 0;
+    let uploads = 0;
+    fakeDojo((call) => {
+      if (call.path === LICENSE) return ++edition === 1 ? { status: 502 } : { status: 404 };
+      if (call.method === "POST") {
+        uploads++;
+        return { status: 502 };
+      }
+      return undefined;
+    });
+    const done = run();
+    await vi.runAllTimersAsync();
+    await done;
+    vi.useRealTimers();
+    expect(edition).toBe(2);
+    expect(uploads).toBe(1);
+    expect(process.exitCode).toBe(1);
+    expect(stdout).toContain("DefectDojo returned HTTP 502 while reimporting the report.");
+  });
+
+  it("says counts may include duplicates when the server doesn't report deduplication", async () => {
+    const env = actionEnv({});
+    fakeDojo((call) => {
+      if (call.path === LICENSE) return { status: 404 };
+      if (call.method === "POST") return { status: 201, body: { test_id: 5, statistics: { after: stats({ low: 1 }) } } };
+      return findingsCount(call, { low: 1 });
+    });
+    await run();
+    expect(env.summary()).toContain("Deduplication was still running");
+  });
+});
+
 describe("DefectDojo Pro", () => {
+  it("recognizes Pro releases from before license_status", async () => {
+    const env = actionEnv({ "push-to-connector": "true" });
+    const { calls } = fakeDojo((call) => {
+      if (call.path === LICENSE) return { status: 404 };
+      if (call.path === "/api/v2/license/") return { status: 200, body: { count: 1, results: [] } };
+      if (call.method === "POST") return { status: 201, body: { test_id: 21, statistics: { after: stats({}) }, deduplication_complete: true } };
+      return findingsCount(call, {});
+    });
+    await run();
+    expect(outputs(env.output()).edition).toBe("pro");
+    expect(formFields(calls.find((c) => c.method === "POST")?.form).push_to_connector).toEqual(["true"]);
+    expect(stdout).not.toContain("::warning::");
+  });
+
+  it("treats an Error status as a failed background import", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    actionEnv({ "background-import": "true" });
+    fakeDojo((call) => {
+      if (call.path === LICENSE) return { status: 200, body: {} };
+      if (call.method === "POST") return { status: 201, body: { test_id: 22, status: "Processing" } };
+      if (call.path === "/api/v2/tests/22/") return { status: 200, body: { status: "Error: could not parse the report" } };
+      return undefined;
+    });
+    const done = run();
+    await vi.runAllTimersAsync();
+    await done;
+    vi.useRealTimers();
+    expect(process.exitCode).toBe(1);
+    expect(stdout).toContain("could not process the report in test 22 (Error: could not parse the report).");
+  });
+
+  it("fails when a background import parsed findings but the test is empty", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    actionEnv({ "background-import": "true", "fail-on": "high" });
+    fakeDojo((call) => {
+      if (call.path === LICENSE) return { status: 200, body: {} };
+      if (call.method === "POST") return { status: 201, body: { test_id: 23, status: "Processing", findings_parsed: 5 } };
+      if (call.path === "/api/v2/tests/23/") return { status: 200, body: { status: "Processed" } };
+      return findingsCount(call, {});
+    });
+    const done = run();
+    await vi.runAllTimersAsync();
+    await done;
+    vi.useRealTimers();
+    expect(process.exitCode).toBe(1);
+    expect(stdout).toContain("DefectDojo parsed 5 findings, but test 23 has none after processing");
+  });
+
   it("sends Pro inputs, waits for a background import and skips the pitch", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout"] });
     const env = actionEnv({ "background-import": "true", "push-to-connector": "true", "organization-name": "Fintech" });
@@ -197,7 +292,7 @@ describe("DefectDojo Pro", () => {
     await done;
     vi.useRealTimers();
     expect(process.exitCode).toBe(1);
-    expect(stdout).toContain("DefectDojo could not process the report in test 12.");
+    expect(stdout).toContain("DefectDojo could not process the report in test 12 (Failed).");
   });
 
   it("surfaces Pro's name resolution warning", async () => {

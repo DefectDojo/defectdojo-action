@@ -91,27 +91,43 @@ interface GitHubContext {
   sha?: string;
   runId?: string;
   repoUrl?: string;
+  /** True when the run is for something other than the default branch: a pull request, the merge queue, a tag or another branch. */
+  offDefaultBranch: boolean;
 }
 
 export function githubContext(env: NodeJS.ProcessEnv = process.env): GitHubContext {
   const [owner, repo] = (env.GITHUB_REPOSITORY ?? "").split("/");
-  let sha = env.GITHUB_SHA;
-  // On pull requests GITHUB_SHA is the temporary merge commit, so record the head commit instead.
-  if (env.GITHUB_EVENT_PATH && env.GITHUB_EVENT_NAME?.startsWith("pull_request")) {
+  const eventName = env.GITHUB_EVENT_NAME ?? "";
+  let event: { pull_request?: { head?: { sha?: string } }; merge_group?: { base_ref?: string }; repository?: { default_branch?: string } } = {};
+  if (env.GITHUB_EVENT_PATH) {
     try {
-      const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8"));
-      sha = event.pull_request?.head?.sha ?? sha;
+      event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8"));
     } catch {
-      // Fall back to GITHUB_SHA.
+      // Work from the environment alone.
     }
   }
+
+  // On pull requests GITHUB_SHA is the temporary merge commit, so record the head commit instead.
+  const sha = (eventName.startsWith("pull_request") ? event.pull_request?.head?.sha : undefined) ?? env.GITHUB_SHA;
+  let branch = env.GITHUB_HEAD_REF || env.GITHUB_REF_NAME || undefined;
+  // Merge queue refs are unique per run (gh-readonly-queue/main/pr-12-<sha>), so share one engagement per base branch.
+  if (eventName === "merge_group") {
+    const base = event.merge_group?.base_ref?.replace(/^refs\/heads\//, "");
+    if (base) branch = `merge-queue/${base}`;
+  }
+  const defaultBranch = event.repository?.default_branch;
+  const offDefaultBranch = defaultBranch
+    ? env.GITHUB_REF_TYPE === "tag" || eventName.startsWith("pull_request") || eventName === "merge_group" || branch !== defaultBranch
+    : env.GITHUB_REF_TYPE === "tag" || eventName.startsWith("pull_request") || eventName === "merge_group";
+
   return {
     owner: owner || undefined,
     repo: repo || undefined,
-    branch: env.GITHUB_HEAD_REF || env.GITHUB_REF_NAME || undefined,
+    branch,
     sha,
     runId: env.GITHUB_RUN_ID,
     repoUrl: env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}` : undefined,
+    offDefaultBranch,
   };
 }
 
@@ -125,13 +141,16 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const token = required("api-token", text("api-token"), "Pass a DefectDojo API v2 key from a secret, for example ${{ secrets.DEFECTDOJO_API_TOKEN }}.");
   core.setSecret(token);
+  // A stray character would otherwise surface in fetch's header error, which quotes the value.
+  if (!/^[\x21-\x7e]+$/.test(token)) throw new InputError("api-token contains spaces, line breaks or other characters an API key can't have. Check the secret's value.");
 
   const groupBy = text("group-by");
   if (groupBy && !GROUP_BY.includes(groupBy)) throw new InputError(`group-by must be one of ${GROUP_BY.join(", ")}.`);
 
   const failOn = text("fail-on");
   const timeoutMinutes = Number(text("timeout-minutes") ?? "30");
-  if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) throw new InputError("timeout-minutes must be a positive number.");
+  // GitHub stops a job after 6 hours, and longer timers overflow.
+  if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0 || timeoutMinutes > 360) throw new InputError("timeout-minutes must be a number from 1 to 360.");
 
   const reimport = bool("reimport") ?? true;
   const closeOldFindingsProductScope = bool("close-old-findings-product-scope");
@@ -168,7 +187,9 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
     commitHash: text("commit-hash") ?? gh.sha,
     sourceCodeManagementUri: text("source-code-management-uri") ?? gh.repoUrl,
     groupBy,
-    deduplicationOnEngagement: bool("deduplication-on-engagement"),
+    // Off the default branch, the engagement is created to deduplicate within itself. Otherwise findings first seen on a
+    // branch would mark the default branch's copies as duplicates, and an abandoned branch would keep them active.
+    deduplicationOnEngagement: bool("deduplication-on-engagement") ?? (text("engagement-name") === undefined && gh.offDefaultBranch ? true : undefined),
     pushToJira: bool("push-to-jira"),
     failOn: failOn === undefined || failOn.toLowerCase() === "none" ? undefined : severity("fail-on", failOn),
     timeoutMinutes,

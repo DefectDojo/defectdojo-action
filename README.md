@@ -12,9 +12,9 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           format: json
@@ -31,6 +31,16 @@ jobs:
 
 By default the product is named after the repository, its product type after the repository owner, and the engagement after the branch. Each run reimports into the same test, so findings the scanner no longer reports are closed and the history of each finding is kept. Product, product type and engagement are created the first time they're needed.
 
+Pin actions to a full commit SHA, as above, so a moved tag can't change what runs with your secrets.
+
+### Branches, pull requests and tags
+
+Each branch gets its own engagement, so a pull request's scan never closes or reopens findings on the default branch. Pull requests use their source branch, tags use the tag name, and the merge queue uses one engagement per base branch (`merge-queue/main`).
+
+Engagements the action creates for anything other than the default branch deduplicate only within themselves. Without that, a finding first seen on a branch would mark the default branch's copy as a duplicate, and the default branch's counts and `fail-on` gate would miss it. Setting `engagement-name` or `deduplication-on-engagement` yourself turns this off.
+
+Branch engagements, and their findings, stay in DefectDojo after the branch is merged or deleted. To keep them out of the product's counts, run the import only on the default branch.
+
 ## DefectDojo Pro and Community Edition
 
 The action works with both editions. It asks the instance which edition it is once per run.
@@ -46,7 +56,7 @@ The action works with both editions. It asks the instance which edition it is on
 | Push new findings to connected tools (`push-to-connector`) | No | Yes |
 | Background import for large reports (`background-import`) | No | Yes |
 | Warnings when a product was renamed or moved | No | Yes |
-| Sensei fixes for imported findings | No | Yes |
+| Sensei scans repositories and cloud accounts and opens fix pull requests | No | Yes |
 
 When a Pro-only input is set on Community Edition, the action logs a warning, skips that input and finishes the import. Set `strict: true` to fail instead. [Compare editions](https://defectdojo.com/pricing?utm_source=github&utm_medium=action&utm_campaign=defectdojo-action&utm_content=readme).
 
@@ -98,7 +108,10 @@ Give each report its own `test-title` when they share a scan type, so each reimp
           api-token: ${{ secrets.DEFECTDOJO_API_TOKEN }}
           file: results.sarif
           scan-type: SARIF
-      - run: echo "${{ steps.dojo.outputs.active-critical }} critical findings, see ${{ steps.dojo.outputs.test-url }}"
+      - env:
+          CRITICAL: ${{ steps.dojo.outputs.active-critical }}
+          TEST_URL: ${{ steps.dojo.outputs.test-url }}
+        run: echo "$CRITICAL critical findings, see $TEST_URL"
 ```
 
 ## Inputs
@@ -118,7 +131,7 @@ Give each report its own `test-title` when they share a scan type, so each reimp
 | --- | --- | --- |
 | `product-name` or `asset-name` | Product (Pro: Asset) to import into. | Repository name |
 | `product-type-name` or `organization-name` | Product type (Pro: Organization) of the product. | Repository owner |
-| `engagement-name` | Engagement to import into. | Branch name |
+| `engagement-name` | Engagement to import into. | Branch name (see [Branches, pull requests and tags](#branches-pull-requests-and-tags)) |
 | `test-title` | Title of the test. Give each report its own title when one engagement gets several reports of the same scan type. | Scan type |
 | `auto-create-context` | Create the product type, product and engagement if they don't exist. | `true` |
 | `environment` | Environment, for example `Development` or `Production`. | |
@@ -138,9 +151,9 @@ Give each report its own `test-title` when they share a scan type, so each reimp
 | `tags` | Tags for the test, separated by commas or new lines. | |
 | `apply-tags-to-findings` | Also add the tags to every imported finding. | |
 | `group-by` | Group new findings by `component_name`, `component_name+component_version`, `file_path`, `finding_title` or `vuln_id_from_tool`. | |
-| `deduplication-on-engagement` | Deduplicate within the engagement instead of across the product. | |
+| `deduplication-on-engagement` | Deduplicate within the engagement instead of across the product. Applies when the engagement is created. | `true` for engagements off the default branch |
 | `push-to-jira` | Push new findings to Jira, if the product has a Jira configuration. | |
-| `timeout-minutes` | How long to wait for the import, including background processing on Pro. | `30` |
+| `timeout-minutes` | How long to wait for the import, including background processing on Pro. Up to 360. | `30` |
 
 **Build metadata**, filled in from the workflow run unless you set them
 
@@ -183,7 +196,9 @@ Give each report its own `test-title` when they share a scan type, so each reimp
 
 **Pull requests from forks.** GitHub doesn't give secrets to workflows that run on pull requests from forks, so the import can't authenticate there. Run the import on `push`, or on pull requests from branches in the same repository. Don't use `pull_request_target` to get around this: it runs with your secrets while checking out code you don't control.
 
-**Private certificate authorities and proxies.** If the instance's certificate comes from a private certificate authority, set `NODE_EXTRA_CA_CERTS` on the step to the path of its certificate. To go through a proxy, set `HTTPS_PROXY` and `NODE_USE_ENV_PROXY=1`.
+**HTTPS, certificates and proxies.** Use an `https://` address: over `http://` the API key and the report cross the network unencrypted, and the action warns. The action doesn't follow redirects, so a server that redirects (for example from `http://` to `https://`) gets an error naming the address to use. If the instance's certificate comes from a private certificate authority, set `NODE_EXTRA_CA_CERTS` on the step to the path of its certificate. To go through a proxy, set `HTTPS_PROXY` (and `NO_PROXY` for hosts to reach directly).
+
+**Retries.** Reads (the edition check, progress and counts) are retried after a 502, 503 or 504. The upload itself is never repeated, so a failed upload can't import the report twice.
 
 **Counts and deduplication.** The action asks DefectDojo to finish deduplication before it answers, so the counts and the gate see the final state. Releases before 3.1.0 don't support that and answer straight away, in which case the summary says the counts may include findings later marked as duplicates.
 
@@ -195,6 +210,6 @@ DefectDojo's privacy policy is at [defectdojo.com/privacy-policy](https://defect
 
 ## License
 
-BSD 3-Clause. See [LICENSE](LICENSE).
+BSD 3-Clause. See [LICENSE](LICENSE). The licenses of the packages bundled into `dist/index.mjs` are in [dist/licenses.txt](dist/licenses.txt).
 
 Report security issues as described in [SECURITY.md](SECURITY.md).

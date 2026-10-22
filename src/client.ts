@@ -1,8 +1,14 @@
+import { EnvHttpProxyAgent } from "undici";
+
 declare const __ACTION_VERSION__: string;
 export const ACTION_VERSION = typeof __ACTION_VERSION__ === "string" ? __ACTION_VERSION__ : "dev";
 
 export class DojoError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly timedOut = false,
+  ) {
     super(message);
   }
 }
@@ -13,6 +19,8 @@ export interface Response<T> {
 }
 
 const MAX_BODY_IN_ERROR = 600;
+const RETRY_STATUSES = new Set([502, 503, 504]);
+const RETRY_DELAYS_MS = [2000, 5000, 10000];
 
 /**
  * Flattens DRF validation errors ({"field": ["msg"]}) into one readable line. DefectDojo also adds "message"
@@ -47,13 +55,38 @@ function explainStatus(status: number, what: string): string {
   }
 }
 
+interface RequestOptions {
+  body?: FormData;
+  signal?: AbortSignal;
+  allow?: number[];
+}
+
 export class DojoClient {
+  // Imports can take longer than undici's default 5 minute header timeout. timeout-minutes bounds them instead.
+  // EnvHttpProxyAgent keeps HTTPS_PROXY / NO_PROXY working.
+  private readonly dispatcher = new EnvHttpProxyAgent({ headersTimeout: 0, bodyTimeout: 0 });
+
   constructor(
     readonly baseUrl: string,
     private readonly token: string,
+    private readonly sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
   ) {}
 
-  async request<T>(method: string, path: string, what: string, options: { body?: FormData; signal?: AbortSignal; allow?: number[] } = {}): Promise<Response<T>> {
+  async request<T>(method: string, path: string, what: string, options: RequestOptions = {}): Promise<Response<T>> {
+    // Only reads are retried: repeating an upload could import the report twice.
+    const attempts = method === "GET" ? RETRY_DELAYS_MS.length + 1 : 1;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.once<T>(method, path, what, options);
+      } catch (err) {
+        const retryable = err instanceof DojoError && (err.status === undefined ? !err.timedOut : RETRY_STATUSES.has(err.status));
+        if (!retryable || attempt >= attempts) throw err;
+        await this.sleep(RETRY_DELAYS_MS[attempt - 1]!);
+      }
+    }
+  }
+
+  private async once<T>(method: string, path: string, what: string, options: RequestOptions): Promise<Response<T>> {
     let res: globalThis.Response;
     try {
       res = await fetch(this.baseUrl + path, {
@@ -65,18 +98,28 @@ export class DojoClient {
         },
         body: options.body,
         signal: options.signal,
-        redirect: "follow",
+        // Never follow: a redirected POST loses its body, and a cross-origin one would send the report elsewhere.
+        redirect: "manual",
+        // @ts-expect-error dispatcher is an undici extension to fetch's options.
+        dispatcher: this.dispatcher,
       });
     } catch (err) {
       const cause = (err as { cause?: { code?: string; message?: string } }).cause;
       if ((err as Error).name === "TimeoutError" || (err as Error).name === "AbortError") {
-        throw new DojoError(`Timed out while ${what}. Raise timeout-minutes if the import is large.`);
+        throw new DojoError(`Timed out while ${what}. Raise timeout-minutes if the import is large.`, undefined, true);
       }
       const detail = cause?.code ?? cause?.message ?? (err as Error).message;
       const tls = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY/i.test(detail)
         ? " If the instance uses a private certificate authority, set NODE_EXTRA_CA_CERTS to its certificate on this step."
         : "";
       throw new DojoError(`Could not reach ${new URL(this.baseUrl).host} while ${what} (${detail}).${tls}`);
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      const target = location ? new URL(location, this.baseUrl + path) : undefined;
+      const suggestion = target ? ` Set defectdojo-url to ${target.origin}${target.pathname.replace(/\/api\/v2\/.*$/, "")}.` : "";
+      throw new DojoError(`DefectDojo redirected the request (HTTP ${res.status}) while ${what}, and the action does not follow redirects.${suggestion}`, res.status);
     }
 
     const raw = await res.text();

@@ -5,20 +5,23 @@ on:
     tags: ["v*.*.*"]
 
 permissions:
-  contents: write # create the release and move the major tag
+  contents: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and move the major tag
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm test
       - name: dist/ matches the source
         run: npm run build && git diff --exit-code dist/
@@ -27,9 +30,18 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
-      - name: Move the major tag
         run: |
+          prerelease=()
+          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag "${prerelease[@]}"
+      - name: Move the major tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Prereleases and patches to older lines leave the major tag where it is.
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then echo "Prerelease, not moving the major tag."; exit 0; fi
           major="${GITHUB_REF_NAME%%.*}"
+          highest=$(git tag --list "$major.*.*" | grep -v -- - | sort -V | tail -1)
+          if [ "$highest" != "$GITHUB_REF_NAME" ]; then echo "$highest is newer, not moving $major."; exit 0; fi
           git tag -f "$major" "$GITHUB_REF_NAME^{commit}"
-          git push -f origin "refs/tags/$major"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$major"

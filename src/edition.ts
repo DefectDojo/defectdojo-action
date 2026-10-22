@@ -28,9 +28,14 @@ export const PRO_FEATURES: ProFeature[] = [
   },
 ];
 
-/** Pro answers the license endpoint, Community Edition has no such route. */
+/**
+ * Pro answers the license API, Community Edition has no such route. license_status/ arrived in Pro 2.53.5, so older
+ * Pro is recognized by the license/ list route instead.
+ */
 export async function detectEdition(client: DojoClient): Promise<{ edition: Edition; status: number }> {
-  const res = await client.request("GET", "/api/v2/license/license_status/", "checking the DefectDojo edition", { allow: [403, 404] });
+  const what = "checking the DefectDojo edition";
+  let res = await client.request("GET", "/api/v2/license/license_status/", what, { allow: [403, 404] });
+  if (res.status === 404) res = await client.request("GET", "/api/v2/license/", what, { allow: [403, 404] });
   if (res.status === 404) return { edition: "community", status: res.status };
   if (res.status >= 200 && res.status < 300) return { edition: "pro", status: res.status };
   return { edition: "unknown", status: res.status };

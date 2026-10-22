@@ -1,7 +1,7 @@
 import * as core from "@actions/core";
 import { DojoClient, DojoError } from "./client.js";
 import { detectEdition, PRO_LINK, requestedProFeatures } from "./edition.js";
-import { activeCounts, atOrAbove, deltaOf, runImport, testIdOf, waitForProcessing } from "./importer.js";
+import { activeCounts, atOrAbove, deltaOf, findingCount, runImport, testIdOf, waitForProcessing } from "./importer.js";
 import { InputError, readConfig } from "./inputs.js";
 import { renderSummary } from "./summary.js";
 
@@ -10,6 +10,10 @@ export async function run(): Promise<void> {
     const config = readConfig();
     const deadline = Date.now() + config.timeoutMinutes * 60_000;
     const client = new DojoClient(config.url, config.token);
+    const host = new URL(config.url).hostname;
+    if (config.url.startsWith("http:") && !["localhost", "127.0.0.1", "[::1]"].includes(host)) {
+      core.warning("defectdojo-url uses http://, so the API token and the report cross the network unencrypted. Use https:// if the instance supports it.");
+    }
 
     const { edition, status } = await detectEdition(client);
     core.info(`DefectDojo edition: ${edition === "pro" ? "Pro" : edition === "community" ? "Community Edition" : `unknown (HTTP ${status})`}`);
@@ -25,7 +29,13 @@ export async function run(): Promise<void> {
     core.info(`${config.reimport ? "Reimporting" : "Importing"} ${config.file} as "${config.scanType}" into ${config.productTypeName} / ${config.productName} / ${config.engagementName}`);
     const response = await runImport(client, config, edition, AbortSignal.timeout(Math.max(1, deadline - Date.now())));
     const testId = testIdOf(response);
-    await waitForProcessing(client, testId, response, deadline);
+    const waited = await waitForProcessing(client, testId, response, deadline);
+    // Pro can record a failed background import as Processed. A parsed report that left a new test empty is the tell.
+    if (waited && (response.findings_parsed ?? 0) > 0 && config.minimumSeverity === "Info" && (await findingCount(client, testId)) === 0) {
+      throw new DojoError(
+        `DefectDojo parsed ${response.findings_parsed} findings, but test ${testId} has none after processing, so the background import most likely failed. Check the test in DefectDojo.`,
+      );
+    }
 
     const counts = await activeCounts(client, testId);
     const delta = deltaOf(response, config.reimport);
@@ -44,7 +54,8 @@ export async function run(): Promise<void> {
       core.setOutput("reactivated", delta.reactivated);
     }
 
-    const serverNotes = [response.name_resolution?.message, ...(response.pro ?? [])].filter((n): n is string => typeof n === "string");
+    // response.pro (Community Edition's product announcements) is left out: the summary has its own Pro section.
+    const serverNotes = [response.name_resolution?.message].filter((n): n is string => typeof n === "string");
     if (response.name_resolution?.message) core.warning(response.name_resolution.message);
 
     await core.summary
@@ -59,7 +70,8 @@ export async function run(): Promise<void> {
           gate,
           skipped,
           serverNotes,
-          dedupIncomplete: response.deduplication_complete === false,
+          // Servers before 3.1.0 don't report it and deduplicate in the background after answering.
+          dedupIncomplete: response.deduplication_complete === false || (response.deduplication_complete === undefined && !waited),
         }),
       )
       .write();

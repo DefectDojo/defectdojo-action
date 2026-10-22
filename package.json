@@ -15,7 +15,8 @@
     "check": "npm run typecheck && npm test && npm run build && git diff --exit-code dist/"
   },
   "dependencies": {
-    "@actions/core": "3.0.1"
+    "@actions/core": "3.0.1",
+    "undici": "7.30.0"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

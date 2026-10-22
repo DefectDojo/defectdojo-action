@@ -27,7 +27,7 @@ inputs:
   organization-name:
     description: "Pro's name for product-type-name. Set one or the other."
   engagement-name:
-    description: "Engagement to import into. Defaults to the branch name."
+    description: "Engagement to import into. Defaults to the branch name, or merge-queue/<base> in the merge queue."
   test-title:
     description: "Title of the test. Defaults to the scan type. Give each report its own title when one engagement gets several reports of the same scan type."
   reimport:
@@ -70,14 +70,14 @@ inputs:
   group-by:
     description: "Group new findings by component_name, component_name+component_version, file_path, finding_title or vuln_id_from_tool."
   deduplication-on-engagement:
-    description: "Deduplicate within the engagement instead of across the product."
+    description: "Deduplicate within the engagement instead of across the product. Defaults to true for engagements the action creates off the default branch."
   push-to-jira:
     description: "Push new findings to Jira, if the product has a Jira configuration."
   fail-on:
     description: "Fail the step when the test has active findings at this severity or above: Info, Low, Medium, High, Critical, or none."
     default: none
   timeout-minutes:
-    description: "How long to wait for the import, including background processing on Pro."
+    description: "How long to wait for the import, including background processing on Pro. Up to 360."
     default: "30"
   push-to-connector:
     description: "Pro: push new findings to the connected tools set up for the product."

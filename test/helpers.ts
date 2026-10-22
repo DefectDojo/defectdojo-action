@@ -9,7 +9,7 @@ export interface Call {
   form?: FormData;
 }
 
-type Handler = (call: Call) => { status: number; body?: unknown } | undefined;
+type Handler = (call: Call) => { status: number; body?: unknown; headers?: Record<string, string> } | undefined;
 
 /** Routes fetch() to handlers and records every call. */
 export function fakeDojo(handler: Handler): { calls: Call[] } {
@@ -21,7 +21,7 @@ export function fakeDojo(handler: Handler): { calls: Call[] } {
     const res = handler(call) ?? { status: 404, body: { detail: "Not found." } };
     return new Response(res.body === undefined ? "" : JSON.stringify(res.body), {
       status: res.status,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...res.headers },
     });
   });
   return { calls };
@@ -44,8 +44,9 @@ export function stats(perSeverity: Record<string, number>): Record<string, { act
 /** Answers the findings count query from a severity map. */
 export function findingsCount(call: Call, counts: Record<string, number>): { status: number; body: unknown } | undefined {
   if (!call.path.startsWith("/api/v2/findings/")) return undefined;
-  const severity = new URLSearchParams(call.path.split("?")[1]).get("severity") ?? "";
-  return { status: 200, body: { count: counts[severity.toLowerCase()] ?? 0, results: [] } };
+  const severity = new URLSearchParams(call.path.split("?")[1]).get("severity");
+  const count = severity === null ? Object.values(counts).reduce((a, b) => a + b, 0) : (counts[severity.toLowerCase()] ?? 0);
+  return { status: 200, body: { count, results: [] } };
 }
 
 export interface Env {

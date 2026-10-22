@@ -26,8 +26,12 @@ export interface ImportResponse {
   name_resolution?: { message?: string };
 }
 
-const TERMINAL = new Set(["Processed", "Failed"]);
 const POLL_INTERVAL_MS = 5000;
+
+/** Pro writes "Failed" or "Error: <reason>" when a background import fails. */
+function failed(status: string): boolean {
+  return status === "Failed" || status.startsWith("Error");
+}
 
 function add(form: FormData, field: string, value: string | boolean | undefined): void {
   if (value === undefined) return;
@@ -94,13 +98,16 @@ export function testIdOf(response: ImportResponse): number {
   return id;
 }
 
-/** Background imports (Pro) answer before the findings exist; follow the test until it settles. */
-export async function waitForProcessing(client: DojoClient, testId: number, response: ImportResponse, deadline: number, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<void> {
+/**
+ * Background imports (Pro) answer before the findings exist; follow the test until it settles.
+ * Returns true when it waited, so the counts reflect deduplication.
+ */
+export async function waitForProcessing(client: DojoClient, testId: number, response: ImportResponse, deadline: number, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<boolean> {
   let status = response.status;
-  if (status === undefined || TERMINAL.has(status)) {
-    if (status === "Failed") throw new DojoError(`DefectDojo could not process the report in test ${testId}.`);
-    return;
-  }
+  if (status === undefined) return false;
+  const failure = (s: string) => new DojoError(`DefectDojo could not process the report in test ${testId} (${s}).`);
+  if (failed(status)) throw failure(status);
+  if (status === "Processed") return true;
   core.info(`DefectDojo is processing the report in the background (${status}).`);
   while (Date.now() < deadline) {
     await sleep(POLL_INTERVAL_MS);
@@ -108,14 +115,21 @@ export async function waitForProcessing(client: DojoClient, testId: number, resp
     const next = res.body.status;
     if (next === undefined) {
       core.warning("DefectDojo did not report the test's status, so the counts below may be incomplete.");
-      return;
+      return false;
     }
     if (next !== status) core.info(`Status: ${next}`);
     status = next;
-    if (status === "Processed") return;
-    if (status === "Failed") throw new DojoError(`DefectDojo could not process the report in test ${testId}.`);
+    if (status === "Processed") return true;
+    if (failed(status)) throw failure(status);
   }
   throw new DojoError(`Test ${testId} was still processing when timeout-minutes ran out. The import continues in DefectDojo.`);
+}
+
+/** All findings in the test, in any state. */
+export async function findingCount(client: DojoClient, testId: number): Promise<number> {
+  const query = new URLSearchParams({ test: String(testId), limit: "1" });
+  const res = await client.request<{ count?: number }>("GET", `/api/v2/findings/?${query}`, "counting the test's findings");
+  return res.body.count ?? 0;
 }
 
 export type Counts = Record<Severity, number>;

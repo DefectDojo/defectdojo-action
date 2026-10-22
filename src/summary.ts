@@ -71,7 +71,7 @@ export function renderSummary(r: RunReport): string {
     lines.push("");
     for (const feature of r.skipped) lines.push(`- ${feature.pitch} You set \`${feature.input}\`, which Community Edition skips.`);
     for (const feature of PRO_FEATURES.filter((f) => !skippedInputs.has(f.input))) lines.push(`- ${feature.pitch}`);
-    lines.push("- Sensei drafts fixes for findings like these and opens them as pull requests.");
+    lines.push("- Sensei scans code repositories and cloud accounts and opens pull requests that fix what it finds.");
     lines.push("");
     lines.push(`[Compare editions](${PRO_LINK}&utm_content=job-summary)`);
     lines.push("");
