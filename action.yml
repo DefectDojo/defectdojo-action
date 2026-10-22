@@ -1,0 +1,122 @@
+name: DefectDojo
+description: Import security scan results into DefectDojo Pro or Community Edition, and fail the build on the severities you choose.
+author: DefectDojo
+branding:
+  icon: shield
+  color: orange
+
+inputs:
+  defectdojo-url:
+    description: "Address of your DefectDojo instance, for example https://defectdojo.example.com."
+    required: true
+  api-token:
+    description: "DefectDojo API v2 key. Pass it from a secret."
+    required: true
+  file:
+    description: "Path to the report to import."
+    required: true
+  scan-type:
+    description: 'DefectDojo scan type of the report, for example "SARIF", "Trivy Scan" or "Semgrep JSON Report".'
+    required: true
+  product-name:
+    description: "Product to import into. Defaults to the repository name."
+  asset-name:
+    description: "Pro's name for product-name. Set one or the other."
+  product-type-name:
+    description: "Product type of the product. Defaults to the repository owner."
+  organization-name:
+    description: "Pro's name for product-type-name. Set one or the other."
+  engagement-name:
+    description: "Engagement to import into. Defaults to the branch name."
+  test-title:
+    description: "Title of the test. Defaults to the scan type. Give each report its own title when one engagement gets several reports of the same scan type."
+  reimport:
+    description: "Update the matching test instead of adding a new one each run."
+    default: "true"
+  auto-create-context:
+    description: "Create the product type, product and engagement if they don't exist."
+    default: "true"
+  close-old-findings:
+    description: "Close findings that are no longer in the report. DefectDojo's default is true for reimport and false for import."
+  close-old-findings-product-scope:
+    description: "With reimport false and close-old-findings true, close old findings across the whole product, not just the engagement."
+  do-not-reactivate:
+    description: "With reimport, leave findings closed in DefectDojo closed even if the report still has them."
+  minimum-severity:
+    description: "Skip findings below this severity: Info, Low, Medium, High or Critical."
+    default: Info
+  active:
+    description: "Force imported findings active (true) or inactive (false). Unset keeps the scanner's own value."
+  verified:
+    description: "Force imported findings verified (true) or unverified (false). Unset keeps the scanner's own value."
+  tags:
+    description: "Tags for the test, separated by commas or new lines."
+  apply-tags-to-findings:
+    description: "Also add the tags to every imported finding."
+  service:
+    description: "Service the report covers. Deduplication and closing old findings are scoped to it."
+  environment:
+    description: 'Environment, for example "Development" or "Production".'
+  version:
+    description: "Version of the software that was scanned."
+  build-id:
+    description: "Build that was scanned. Defaults to the workflow run ID."
+  branch-tag:
+    description: "Branch or tag that was scanned. Defaults to the current branch."
+  commit-hash:
+    description: "Commit that was scanned. Defaults to the current commit (the head commit on pull requests)."
+  source-code-management-uri:
+    description: "Repository URL. Defaults to this repository."
+  group-by:
+    description: "Group new findings by component_name, component_name+component_version, file_path, finding_title or vuln_id_from_tool."
+  deduplication-on-engagement:
+    description: "Deduplicate within the engagement instead of across the product."
+  push-to-jira:
+    description: "Push new findings to Jira, if the product has a Jira configuration."
+  fail-on:
+    description: "Fail the step when the test has active findings at this severity or above: Info, Low, Medium, High, Critical, or none."
+    default: none
+  timeout-minutes:
+    description: "How long to wait for the import, including background processing on Pro."
+    default: "30"
+  push-to-connector:
+    description: "Pro: push new findings to the connected tools set up for the product."
+  background-import:
+    description: "Pro: parse the report, then create findings in the background. The action waits for the test to finish processing."
+  strict:
+    description: "Fail instead of warning when a Pro-only input is set on Community Edition."
+    default: "false"
+
+outputs:
+  edition:
+    description: "pro, community or unknown."
+  test-id:
+    description: "ID of the test the report went into."
+  test-url:
+    description: "Link to the test in DefectDojo."
+  engagement-id:
+    description: "ID of the engagement."
+  product-id:
+    description: "ID of the product (the asset in Pro)."
+  active:
+    description: "Active findings in the test after the import."
+  active-critical:
+    description: "Active critical findings in the test."
+  active-high:
+    description: "Active high findings in the test."
+  active-medium:
+    description: "Active medium findings in the test."
+  active-low:
+    description: "Active low findings in the test."
+  active-info:
+    description: "Active info findings in the test."
+  created:
+    description: "Findings this run added, when DefectDojo reports it."
+  closed:
+    description: "Findings this run closed, when DefectDojo reports it."
+  reactivated:
+    description: "Findings this run reactivated, when DefectDojo reports it."
+
+runs:
+  using: node24
+  main: dist/index.mjs

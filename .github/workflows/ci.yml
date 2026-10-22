@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: dist/ matches the source
+        run: |
+          npm run build
+          git diff --exit-code dist/ || { echo "::error::dist/ is out of date. Run npm run build and commit the result."; exit 1; }
+
+  e2e:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The latest release, and an older one without deduplication_execution_mode.
+        dojo: ["3.4.202", "2.50.4"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Community Edition ${{ matrix.dojo }}
+        env:
+          DJANGO_VERSION: ${{ matrix.dojo }}
+          NGINX_VERSION: ${{ matrix.dojo }}
+        run: test/e2e/run.sh
+
+  action:
+    # Runs the action the way users do, from this checkout, against a stack with no server.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: unreachable
+        uses: ./
+        continue-on-error: true
+        with:
+          defectdojo-url: http://127.0.0.1:9
+          api-token: not-a-real-token
+          file: test/e2e/first.sarif
+          scan-type: SARIF
+      - name: The step failed with a readable error
+        env:
+          OUTCOME: ${{ steps.unreachable.outcome }}
+        run: '[ "$OUTCOME" = failure ]'

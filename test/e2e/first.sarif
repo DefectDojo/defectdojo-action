@@ -1,0 +1,102 @@
+{
+ "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+ "version": "2.1.0",
+ "runs": [
+  {
+   "tool": {
+    "driver": {
+     "name": "e2e-scanner",
+     "version": "1.0.0",
+     "rules": [
+      {
+       "id": "E2E001",
+       "shortDescription": {
+        "text": "SQL injection in login query"
+       },
+       "properties": {
+        "security-severity": "Critical"
+       }
+      },
+      {
+       "id": "E2E002",
+       "shortDescription": {
+        "text": "Hardcoded API key"
+       },
+       "properties": {
+        "security-severity": "High"
+       }
+      },
+      {
+       "id": "E2E003",
+       "shortDescription": {
+        "text": "Verbose error page"
+       },
+       "properties": {
+        "security-severity": "Low"
+       }
+      }
+     ]
+    }
+   },
+   "results": [
+    {
+     "ruleId": "E2E001",
+     "level": "error",
+     "message": {
+      "text": "SQL injection in login query"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "src/login.py"
+        },
+        "region": {
+         "startLine": 12
+        }
+       }
+      }
+     ]
+    },
+    {
+     "ruleId": "E2E002",
+     "level": "error",
+     "message": {
+      "text": "Hardcoded API key"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "src/config.py"
+        },
+        "region": {
+         "startLine": 4
+        }
+       }
+      }
+     ]
+    },
+    {
+     "ruleId": "E2E003",
+     "level": "error",
+     "message": {
+      "text": "Verbose error page"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "src/app.py"
+        },
+        "region": {
+         "startLine": 88
+        }
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
