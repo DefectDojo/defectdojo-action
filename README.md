@@ -219,7 +219,7 @@ Don't point at a branch such as `main`. It changes with every commit, including 
 To find the commit of a release:
 
 ```sh
-git ls-remote https://github.com/DefectDojo/defectdojo-action 'refs/tags/v1.0.0^{}'
+git ls-remote https://github.com/DefectDojo/defectdojo-action refs/tags/v1.0.0 'refs/tags/v1.0.0^{}' | tail -n 1
 ```
 
 ## Verifying a release

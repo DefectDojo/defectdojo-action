@@ -9,6 +9,11 @@ name: Release
 #
 # The major tag is a plain git tag, never a GitHub release, so it stays movable when the
 # repository's immutable releases setting is on.
+#
+# The release job can be re-run: it publishes a release only if it doesn't exist yet.
+#
+# After a release, point the first example in README.md at the new release's commit:
+#   git ls-remote https://github.com/DefectDojo/defectdojo-action refs/tags/v1.2.3 'refs/tags/v1.2.3^{}' | tail -n 1
 
 on:
   push:
@@ -84,12 +89,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prerelease=()
-          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
-          # With assets, gh creates a draft, uploads them, then publishes, so an immutable
-          # release is never published without its assets.
-          gh release create "$GITHUB_REF_NAME" release-assets/index.mjs release-assets/licenses.txt \
-            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag "${prerelease[@]}"
+          tag=$GITHUB_REF_NAME
+          assets=(release-assets/index.mjs release-assets/licenses.txt)
+          if ! draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>&1); then
+            [[ "$draft" == *"release not found"* ]] || { echo "$draft" >&2; exit 1; }
+            prerelease=()
+            [[ "$tag" == *-* ]] && prerelease=(--prerelease)
+            # With assets, gh creates a draft, uploads them, then publishes, so an immutable
+            # release is never published without its assets.
+            gh release create "$tag" "${assets[@]}" --title "$tag" --generate-notes --verify-tag "${prerelease[@]}"
+          elif [ "$draft" = true ]; then
+            echo "A draft of $tag exists from an earlier run. Replacing its assets and publishing it."
+            gh release upload "$tag" "${assets[@]}" --clobber
+            gh release edit "$tag" --draft=false
+          else
+            # Published by an earlier run. Its assets can't be replaced (or changed at all once
+            # the release is immutable): upload missing ones and check the others match.
+            attached=$(gh release view "$tag" --json assets --jq '.assets[] | "\(.name) \(.digest)"')
+            for file in "${assets[@]}"; do
+              name=${file##*/}
+              digest=$(awk -v name="$name" '$1 == name { print $2 }' <<< "$attached")
+              if [ -z "$digest" ]; then
+                gh release upload "$tag" "$file"
+              elif [ "$digest" = "sha256:$(sha256sum "$file" | cut -d' ' -f1)" ]; then
+                echo "$name is already attached to $tag."
+              elif [ "$digest" = null ]; then
+                echo "::warning::$name is attached to $tag but GitHub reports no digest for it. Left as it is."
+              else
+                echo "::error::$name attached to $tag differs from this build ($digest)."
+                exit 1
+              fi
+            done
+          fi
       - name: Move the major tag
         env:
           GH_TOKEN: ${{ github.token }}
