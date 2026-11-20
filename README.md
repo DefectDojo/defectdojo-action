@@ -20,7 +20,7 @@ jobs:
           format: json
           output: trivy.json
       - name: Import into DefectDojo
-        uses: DefectDojo/defectdojo-action@v1
+        uses: DefectDojo/defectdojo-action@19cdb2252df096dde1757c6c4e13158dda922311 # v1.0.0
         with:
           defectdojo-url: https://defectdojo.example.com
           api-token: ${{ secrets.DEFECTDOJO_API_TOKEN }}
@@ -31,7 +31,7 @@ jobs:
 
 By default the product is named after the repository, its product type after the repository owner, and the engagement after the branch. Each run reimports into the same test, so findings the scanner no longer reports are closed and the history of each finding is kept. Product, product type and engagement are created the first time they're needed.
 
-Pin actions to a full commit SHA, as above, so a moved tag can't change what runs with your secrets.
+Pin actions to a full commit SHA, as above, so a moved tag can't change what runs with your secrets. See [Versions](#versions) for the other ways to point at a release, and [Verifying a release](#verifying-a-release) to check what a release runs.
 
 ### Branches, pull requests and tags
 
@@ -61,6 +61,8 @@ The action works with both editions. It asks the instance which edition it is on
 When a Pro-only input is set on Community Edition, the action logs a warning, skips that input and finishes the import. Set `strict: true` to fail instead. [Compare editions](https://defectdojo.com/pricing?utm_source=github&utm_medium=action&utm_campaign=defectdojo-action&utm_content=readme).
 
 ## Examples
+
+These examples use the `v1` tag to stay short. In your workflows, pin a commit SHA as in the first example.
 
 ### Several reports in one job
 
@@ -201,6 +203,43 @@ Give each report its own `test-title` when they share a scan type, so each reimp
 **Retries.** Reads (the edition check, progress and counts) are retried after a 502, 503 or 504. The upload itself is never repeated, so a failed upload can't import the report twice.
 
 **Counts and deduplication.** The action asks DefectDojo to finish deduplication before it answers, so the counts and the gate see the final state. Releases before 3.1.0 don't support that and answer straight away, in which case the summary says the counts may include findings later marked as duplicates.
+
+## Versions
+
+Each release is tagged with its version, such as `v1.0.0`, and the `v1` tag moves to the newest `v1` release. Point `uses:` at one of these:
+
+| `uses:` | What runs |
+| --- | --- |
+| `DefectDojo/defectdojo-action@<commit SHA> # v1.0.0` | The same code every time. Dependabot and Renovate can keep the SHA and the comment up to date. Recommended. |
+| `DefectDojo/defectdojo-action@v1.0.0` | The `v1.0.0` release. |
+| `DefectDojo/defectdojo-action@v1` | The newest `v1` release. It changes when a new one comes out. |
+
+Don't point at a branch such as `main`. It changes with every commit, including ones that aren't released.
+
+To find the commit of a release:
+
+```sh
+git ls-remote https://github.com/DefectDojo/defectdojo-action refs/tags/v1.0.0 'refs/tags/v1.0.0^{}' | tail -n 1
+```
+
+## Verifying a release
+
+Releases after v1.0.0 carry a build provenance attestation for `dist/index.mjs`, the code the action runs, and for `dist/licenses.txt`. The release workflow rebuilds both from the tagged source, checks that they match the files committed at the tag, attests them, and attaches them to the release.
+
+To check the code of a release, with the [GitHub CLI](https://cli.github.com) signed in:
+
+```sh
+version=vX.Y.Z  # the release you use
+git clone --quiet --depth 1 --branch "$version" https://github.com/DefectDojo/defectdojo-action
+gh attestation verify defectdojo-action/dist/index.mjs \
+  --repo DefectDojo/defectdojo-action \
+  --signer-workflow DefectDojo/defectdojo-action/.github/workflows/release.yml \
+  --source-ref "refs/tags/$version"
+```
+
+If you pin a commit SHA, also pass `--source-digest` with that SHA. Verification then fails unless the file was built from that commit.
+
+The same files are attached to the release, so you can also download them from the release page and check them with the same command.
 
 ## Privacy
 
